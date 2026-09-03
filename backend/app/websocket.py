@@ -1,52 +1,52 @@
-import asyncio
-from typing import List, Dict
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
-import redis.asyncio as aioredis
-from app.database import get_redis
+from fastapi import APIRouter, WebSocket, status, Query
+from sqlalchemy.orm import Session
+import jwt
+from app.database import SessionLocal
+from app.auth import SECRET_KEY, ALGORITHM
+from app.models import Board, User
 
-router = APIRouter(tags=["WebSocket"])
-
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: Dict[int, List[WebSocket]] = {}
-
-    async def connect(self, board_id: int, websocket: WebSocket):
-        await websocket.accept()
-        if board_id not in self.active_connections:
-            self.active_connections[board_id] = []
-        self.active_connections[board_id].append(websocket)
-
-    def disconnect(self, board_id: int, websocket: WebSocket):
-        if board_id in self.active_connections:
-            self.active_connections[board_id].remove(websocket)
-            if not self.active_connections[board_id]:
-                del self.active_connections[board_id]
-
-    async def broadcast(self, board_id: int, message: str):
-        if board_id in self.active_connections:
-            for connection in self.active_connections[board_id]:
-                await connection.send_text(message)
-
-manager = ConnectionManager()
-
-async def redis_subscriber(board_id: int, r: aioredis.Redis):
-    pubsub = r.pubsub()
-    await pubsub.subscribe(f"board:{board_id}")
-    try:
-        async for message in pubsub.listen():
-            if message and message["type"] == "message":
-                data = message["data"]
-                await manager.broadcast(board_id, data)
-    except asyncio.CancelledError:
-        await pubsub.unsubscribe(f"board:{board_id}")
+router = APIRouter()
 
 @router.websocket("/ws/boards/{board_id}")
-async def websocket_endpoint(websocket: WebSocket, board_id: int, r: aioredis.Redis = Depends(get_redis)):
-    await manager.connect(board_id, websocket)
-    sub_task = asyncio.create_task(redis_subscriber(board_id, r))
+async def websocket_endpoint(websocket: WebSocket, board_id: int, token: str = Query(None)):
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    # Decodifica o token JWT
     try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_email: str = payload.get("sub")
+        if user_email is None:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    db: Session = SessionLocal()
+
+    try:
+        # Busca o usuário no banco
+        user = db.query(User).filter(User.email == user_email).first()
+        if not user:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        # Verifica se o usuário é membro do board
+        board = db.query(Board).filter(Board.id == board_id).first()
+        if not board or user not in board.members:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+        # Aceita a conexão após as duas validações passarem
+        await manager.connect(websocket, board_id)
+        
         while True:
             await websocket.receive_text()
-    except WebSocketDisconnect:
-        manager.disconnect(board_id, websocket)
-        sub_task.cancel()
+
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    finally:
+        manager.disconnect(websocket, board_id)
+        db.close()

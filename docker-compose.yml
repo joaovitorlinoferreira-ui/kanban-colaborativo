@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   db:
     image: postgres:15-alpine
@@ -26,7 +28,7 @@ services:
     container_name: kanban_backend
     restart: always
     ports:
-      - "8002:8000"
+      - "8003:8000"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/kanban_db
       - REDIS_URL=redis://redis:6379/0
@@ -36,6 +38,22 @@ services:
       - redis
     volumes:
       - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: kanban_frontend
+    restart: always
+    ports:
+      - "5175:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8003
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:
