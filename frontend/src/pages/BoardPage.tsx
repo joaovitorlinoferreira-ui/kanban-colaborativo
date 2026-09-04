@@ -113,3 +113,5 @@ export const BoardPage: React.FC = () => {
     </div>
   );
 };
+// Mantém os exports nomeados existentes e adiciona o export default
+export default BoardPage;
