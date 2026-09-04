@@ -4,17 +4,35 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
+
+# --- PATCH DE COMPATIBILIDADE (PASSLIB + BCRYPT >= 4.0.0) ---
+import bcrypt
+
+if not hasattr(bcrypt, "__about__"):
+    class About:
+        __version__ = getattr(bcrypt, "__version__", "4.0.0")
+    bcrypt.__about__ = About()
+
+_original_hashpw = bcrypt.hashpw
+def _safe_hashpw(password, salt):
+    if isinstance(password, bytes) and len(password) > 72:
+        password = password[:72]
+    return _original_hashpw(password, salt)
+bcrypt.hashpw = _safe_hashpw
+# -----------------------------------------------------------
+
+from passlib.context import CryptContext
 
 SECRET_KEY = os.getenv("SECRET_KEY", "super_secret_kanban_key_12345")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# Ajustado para alinhar com a rota /auth/auth/login vista no openapi.json
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/auth/login")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)

@@ -9,9 +9,9 @@ from app.auth import get_current_user
 
 router = APIRouter(prefix="/cards", tags=["Cards"])
 
-async def notify_board_change(board_id: int, event_type: str, payload: dict, r: aioredis.Redis):
+async def notify_board_change(board_id: int, event_type: str, payload: dict, r):
     message = json.dumps({"event": event_type, "data": payload})
-    await r.publish(f"board:{board_id}", message)
+    r.publish(f"board:{board_id}", message)
 
 @router.post("/column/{column_id}", response_model=CardResponse, status_code=status.HTTP_201_CREATED)
 async def create_card(

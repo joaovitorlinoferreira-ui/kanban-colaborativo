@@ -1,15 +1,22 @@
+import asyncio
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import Base, engine
-from app.routers import auth, boards, cards
-from app import websocket
 
-Base.metadata.create_all(bind=engine)
+from app.websocket import router as websocket_router, redis_subscriber
+from app.routers import auth, boards, cards
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # STARTUP: Inicia a escuta do Redis Pub/Sub
+    subscriber_task = asyncio.create_task(redis_subscriber())
+    yield
+    # SHUTDOWN: Cancela a tarefa ao desligar
+    subscriber_task.cancel()
 
 app = FastAPI(
-    title="Kanban Colaborativo em Tempo Real",
-    description="API do Kanban com FastAPI, WebSocket e Redis",
-    version="1.0.0"
+    title="Kanban Colaborativo",
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -20,11 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router)
-app.include_router(boards.router)
-app.include_router(cards.router)
-app.include_router(websocket.router)
-
-@app.get("/")
-def read_root():
-    return {"status": "API Kanban operando com sucesso!"}
+app.include_router(auth.router, prefix="/auth", tags=["Auth"])
+app.include_router(boards.router, prefix="/boards", tags=["Boards"])
+app.include_router(cards.router, tags=["Cards"])
+app.include_router(websocket_router)
